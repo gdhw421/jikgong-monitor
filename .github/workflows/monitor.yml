@@ -1,0 +1,40 @@
+name: daily-monitor
+
+on:
+  schedule:
+    - cron: "10 22 * * *"
+  workflow_dispatch:
+    inputs:
+      run_date:
+        description: "조회일 (yyyy-mm-dd). 비우면 오늘"
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r requirements.txt
+
+      - name: 모니터 실행
+        env:
+          KAMIS_CERT_KEY: ${{ secrets.KAMIS_CERT_KEY }}
+          KAMIS_CERT_ID: ${{ secrets.KAMIS_CERT_ID }}
+          RUN_DATE: ${{ github.event.inputs.run_date }}
+        run: python monitor.py
+
+      - name: 결과 커밋
+        run: |
+          git config user.name "jikgong-monitor"
+          git config user.email "actions@users.noreply.github.com"
+          git add data STATUS.md
+          git diff --cached --quiet || git commit -m "monitor: $(date -u -d '+9 hours' +%Y-%m-%d)"
+          git push
