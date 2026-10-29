@@ -202,6 +202,8 @@ def main():
         sys.exit("KAMIS_CERT_KEY / KAMIS_CERT_ID 환경변수가 필요하다.")
 
     cfg = load_config()
+    (DATA / "raw").mkdir(parents=True, exist_ok=True)
+    (DATA / "alerts").mkdir(parents=True, exist_ok=True)
     run_date = os.environ.get("RUN_DATE") or datetime.now(KST).strftime("%Y-%m-%d")
     print(f"실행일 {run_date}")
 
