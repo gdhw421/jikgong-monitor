@@ -15,6 +15,9 @@ permissions:
 jobs:
   run:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: jikgong-monitor
     steps:
       - uses: actions/checkout@v4
 
