@@ -2,7 +2,7 @@ name: daily-monitor
 
 on:
   schedule:
-    - cron: "37 22 * * *"
+    - cron: "23 20 * * *"
   workflow_dispatch:
     inputs:
       run_date:
