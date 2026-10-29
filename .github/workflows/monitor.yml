@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       run_date:
-        description: "조회일 (yyyy-mm-dd). 비우면 오늘"
+        description: "조회일 (yyyy-mm-dd). 비우면 어제"
         required: false
 
 permissions:

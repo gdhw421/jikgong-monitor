@@ -11,7 +11,7 @@
 
 환경변수
   KAMIS_CERT_KEY, KAMIS_CERT_ID          KAMIS 발급 키·아이디
-  RUN_DATE (선택)                         yyyy-mm-dd. 없으면 오늘(KST)
+  RUN_DATE (선택)                         yyyy-mm-dd. 없으면 어제(KST) — 당일가는 오후 확정
 """
 
 import csv
@@ -204,7 +204,8 @@ def main():
     cfg = load_config()
     (DATA / "raw").mkdir(parents=True, exist_ok=True)
     (DATA / "alerts").mkdir(parents=True, exist_ok=True)
-    run_date = os.environ.get("RUN_DATE") or datetime.now(KST).strftime("%Y-%m-%d")
+    # KAMIS 당일 도매가는 오후에 확정되므로 기본 조회일은 어제(KST)
+    run_date = os.environ.get("RUN_DATE") or (datetime.now(KST) - timedelta(days=1)).strftime("%Y-%m-%d")
     print(f"실행일 {run_date}")
 
     rows = []
