@@ -130,14 +130,18 @@ def evaluate(item, cfg):
 
 
 def append_log(run_date, rows):
+    """같은 날짜 행은 덮어쓴다 (재실행·휴장일 후퇴 시 중복 방지)."""
     path = DATA / "log.csv"
-    new = not path.exists()
     fields = ["date", "category", "item_name", "kind_name", "rank", "unit", "price",
               "vs_week_pct", "vs_month_pct", "vs_year_pct", "vs_normal_pct", "ambient", "alert"]
-    with open(path, "a", newline="", encoding="utf-8-sig") as f:
+    old = []
+    if path.exists():
+        with open(path, encoding="utf-8-sig") as f:
+            old = [r for r in csv.DictReader(f) if r["date"] != run_date]
+    with open(path, "w", newline="", encoding="utf-8-sig") as f:
         w = csv.DictWriter(f, fieldnames=fields)
-        if new:
-            w.writeheader()
+        w.writeheader()
+        w.writerows(old)
         for r in rows:
             w.writerow({k: r.get(k, "") for k in fields} | {"date": run_date})
 
@@ -210,21 +214,34 @@ def main():
     cfg = load_config()
     (DATA / "raw").mkdir(parents=True, exist_ok=True)
     (DATA / "alerts").mkdir(parents=True, exist_ok=True)
-    # KAMIS 당일 도매가는 오후에 확정되므로 기본 조회일은 어제(KST)
-    run_date = os.environ.get("RUN_DATE") or (datetime.now(KST) - timedelta(days=1)).strftime("%Y-%m-%d")
-    print(f"실행일 {run_date}")
-
+    # KAMIS 당일 도매가는 오후에 확정되므로 기본 조회일은 어제(KST).
+    # 주말·휴장일은 가격이 비어서 오므로, 가격 있는 행이 하나도 없으면 하루씩 물러나 최근 거래일을 찾는다.
+    forced = os.environ.get("RUN_DATE")
+    run_date = forced or (datetime.now(KST) - timedelta(days=1)).strftime("%Y-%m-%d")
     rows = []
-    for cat in cfg["categories"]:
-        items = fetch_category(cfg, cat, run_date, key, cert_id)
-        print(f"[{cat}] {len(items)}개 품목")
-        for it in items:
-            r = evaluate(it, cfg)
-            r["category"] = cat
-            r["ambient"] = is_ambient(r["item_name"], cfg["ambient_items"])
-            rows.append(r)
+    for attempt in range(5):
+        d = datetime.strptime(run_date, "%Y-%m-%d")
+        if not forced and d.weekday() >= 5:  # 토·일은 조회하지 않고 바로 물러난다
+            run_date = (d - timedelta(days=1)).strftime("%Y-%m-%d")
+            continue
+        print(f"실행일 {run_date}")
+        rows = []
+        for cat in cfg["categories"]:
+            items = fetch_category(cfg, cat, run_date, key, cert_id)
+            print(f"[{cat}] {len(items)}개 품목")
+            for it in items:
+                r = evaluate(it, cfg)
+                r["category"] = cat
+                r["ambient"] = is_ambient(r["item_name"], cfg["ambient_items"])
+                rows.append(r)
+        if forced or any(r["price"] is not None for r in rows):
+            break
+        print(f"{run_date}: 가격 데이터 없음(휴장). 전일로 물러난다.")
+        for f in (DATA / "raw").glob(f"{run_date}_*.json"):
+            f.unlink()
+        run_date = (d - timedelta(days=1)).strftime("%Y-%m-%d")
 
-    if not rows:
+    if not rows or not any(r["price"] is not None for r in rows):
         sys.exit("수집된 데이터가 없다. data/raw/ 의 원본 응답을 확인할 것.")
 
     alerts = [r for r in rows if r["ambient"] and r["alert"]]
