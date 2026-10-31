@@ -165,7 +165,12 @@ def write_alerts(run_date, alerts):
 
 def write_status(run_date, rows, alerts, cfg):
     ambient = [r for r in rows if r["ambient"] and r["price"] is not None]
-    ambient.sort(key=lambda r: (r["vs_month_pct"] if r["vs_month_pct"] is not None else 999))
+    # 알림 행 먼저 → 1개월 대비 하락률 오름차순 → 1개월 비교값 없는 행(신규출하)은 맨 뒤
+    ambient.sort(key=lambda r: (
+        0 if r["alert"] else 1,
+        1 if r["vs_month_pct"] is None else 0,
+        r["vs_month_pct"] if r["vs_month_pct"] is not None else 0,
+    ))
     th = cfg["thresholds"]
     lines = [
         "# 직공 폭락 감지 모니터 — 현재 상태",
@@ -183,13 +188,14 @@ def write_status(run_date, rows, alerts, cfg):
                          f"{a['price']:,.0f}원 — {', '.join(a['signals'])}")
     else:
         lines.append("없음")
-    lines += ["", "## 상온 유통 후보 품목 — 1개월 대비 하락 순", "",
+    lines += ["", "## 상온 유통 후보 품목 — 알림 우선, 1개월 대비 하락 순", "",
               "| 품목 | 품종 | 등급 | 단위 | 도매가 | 1주 | 1개월 | 1년 | 평년 |",
               "|---|---|---|---|---:|---:|---:|---:|---:|"]
-    for r in ambient[:30]:
+    for r in ambient:
+        month = "신규출하" if r["vs_month_pct"] is None else fmt(r["vs_month_pct"])
         lines.append(
             f"| {r['item_name']} | {r['kind_name']} | {r['rank']} | {r['unit']} | {r['price']:,.0f} | "
-            f"{fmt(r['vs_week_pct'])} | {fmt(r['vs_month_pct'])} | {fmt(r['vs_year_pct'])} | {fmt(r['vs_normal_pct'])} |"
+            f"{fmt(r['vs_week_pct'])} | {month} | {fmt(r['vs_year_pct'])} | {fmt(r['vs_normal_pct'])} |"
         )
     lines += ["", f"전체 수집 {len(rows)}개 행, 상온 후보 {len(ambient)}개. 누적 로그: `data/log.csv`"]
     (ROOT / "STATUS.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
