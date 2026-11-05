@@ -1,8 +1,9 @@
 """직공 컨택 후보 스토어 리스트 v0
 
 폭락 감지 모니터(monitor.py)가 끝난 뒤 실행한다.
-가장 최근 알림 품목마다 네이버 쇼핑에서 스마트스토어를 찾아,
-산지가 고양종합터미널 직행 노선이 있는 시·군인 곳을 품목당 최대 3곳 뽑는다.
+가장 최근 알림 품목마다, 고양종합터미널 직행 노선이 있는 시·군별로
+네이버 웹문서 검색(NAVER API HUB)에서 스마트스토어를 찾아 품목당 최대 3곳 뽑는다.
+(네이버 쇼핑 검색 API는 2026-07-31 종료되어 웹문서 검색을 쓴다.)
 
 산출물
   STORES.md                    오늘의 리스트 (매일 교체)
@@ -12,10 +13,10 @@
 입력
   data/log.csv                 모니터 누적 로그. 가장 최근 날짜의 알림 행을 쓴다
   data/routes.csv              고양종합터미널 직행 노선이 있는 시·군
-  data/regions.json            산지 추정용 시·군 이름
+  data/regions.json            읍·면·특산지 이름 → 시·군 별칭
 
 환경변수
-  NAVER_CLIENT_ID, NAVER_CLIENT_SECRET   네이버 검색 오픈 API 키
+  NAVER_CLIENT_ID, NAVER_CLIENT_SECRET   NAVER API HUB Application의 Client ID / Secret
   CONTACTS_CSV_URL (선택)                 컨택목록 구글 시트의 'CSV로 웹에 게시' 주소
 """
 
@@ -25,15 +26,19 @@ import json
 import os
 import re
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import urlparse
 
 import requests
 
 ROOT = Path(__file__).resolve().parent
 DATA = ROOT / "data"
 KST = timezone(timedelta(hours=9))
-NAVER_API = "https://openapi.naver.com/v1/search/shop.json"
+NAVER_API = "https://naverapihub.apigw.ntruss.com/search/v1/webkr"
+STORE_HOSTS = ("smartstore.naver.com", "m.smartstore.naver.com", "brand.naver.com", "m.brand.naver.com")
+NOT_STORE = {"main", "search", "category", "products", "i", "inflow", "shoppingstory"}
 
 
 # ---------- 입력 읽기 ----------
@@ -73,14 +78,14 @@ def load_routes(require_parcel, require_confirmed=False):
     return routes
 
 
-def load_regions():
+def load_aliases():
+    """시·군 → 그 지역으로 인정할 이름들 (시·군 이름 + 읍·면·특산지 별칭)."""
     with open(DATA / "regions.json", encoding="utf-8") as f:
         j = json.load(f)
-    names = {}  # 시군 → 시도
-    for sido, lst in j["regions"].items():
-        for n in lst:
-            names.setdefault(n, sido)
-    return names, set(j.get("strict", [])), j.get("aliases", {})
+    words = {}
+    for alias, region in j.get("aliases", {}).items():
+        words.setdefault(region, []).append(alias)
+    return words
 
 
 def norm(s):
@@ -122,68 +127,66 @@ def load_contacts(url, recontact_days, today):
     return excluded, None
 
 
-# ---------- 네이버 쇼핑 검색 ----------
+# ---------- 네이버 웹문서 검색 ----------
 
-def naver_search(query, cid, secret):
+def naver_search(query, cid, secret, display):
     r = requests.get(
         NAVER_API,
-        params={"query": query, "display": 100, "sort": "sim", "exclude": "used:rental:cbshop"},
-        headers={"X-Naver-Client-Id": cid, "X-Naver-Client-Secret": secret},
+        params={"query": query, "display": display},
+        headers={"X-NCP-APIGW-API-KEY-ID": cid, "X-NCP-APIGW-API-KEY": secret},
         timeout=30,
     )
-    r.raise_for_status()
+    if r.status_code != 200:
+        sys.exit(f"네이버 검색 오류 {r.status_code}: {r.text[:300]}")
+    time.sleep(0.1)
     return r.json().get("items", [])
 
 
-def find_region(text, names, strict, aliases):
-    """글에서 가장 먼저 나오는 시·군 이름을 찾는다. 없으면 None."""
-    best = None  # (위치, 시군)
-    taken = [False] * len(text)
-    keys = sorted(list(names) + list(aliases), key=len, reverse=True)  # 남양주가 양주보다 먼저
-    for key in keys:
-        for m in re.finditer(re.escape(key), text):
-            s, e = m.span()
-            if any(taken[s:e]):
-                continue
-            if key in strict and not re.match(r"[시군산]", text[e:e + 1] or " "):
-                continue
-            for i in range(s, e):
-                taken[i] = True
-            if best is None or s < best[0]:
-                best = (s, aliases.get(key, key))
-    return best[1] if best else None
+def clean(s):
+    s = re.sub(r"<.*?>", "", s or "")
+    return s.replace("&amp;", "&").replace("&quot;", '"').replace("&lt;", "<").replace("&gt;", ">").strip()
 
 
-def candidates_for(name, scfg, cid, secret, names, strict, aliases):
-    """한 품목의 후보 스토어. 스토어당 1행, 검색 순위 순."""
+def store_of(link, title):
+    """스마트스토어 주소면 (스토어 아이디, 스토어명, 스토어 홈 주소). 아니면 None."""
+    u = urlparse(link)
+    if u.netloc.lower() not in STORE_HOSTS:
+        return None
+    parts = [p for p in u.path.split("/") if p]
+    if not parts or parts[0].lower() in NOT_STORE:
+        return None
+    slug = parts[0]
+    # 스마트스토어 페이지 제목은 보통 '상품명 : 스토어명' 또는 '스토어명'
+    name = title.rsplit(" : ", 1)[-1].strip() if " : " in title else (title if len(parts) == 1 else "")
+    host = "brand.naver.com" if "brand" in u.netloc else "smartstore.naver.com"
+    return slug.lower(), (name or slug)[:30], f"https://{host}/{slug}"
+
+
+def candidates_for(name, region, words, scfg, cid, secret):
+    """한 품목·한 지역의 후보 스토어. 스토어당 1행, 검색 순위 순. (후보, 전체 결과 수) 반환."""
     raw = []
     for q in scfg["queries"]:
-        raw += naver_search(q.replace("{품목}", name), cid, secret)
-
-    smart = [it for it in raw if "smartstore.naver.com" in it.get("link", "")]
-    pool = smart if (scfg.get("only_smartstore") and smart) else raw
-    fallback = bool(scfg.get("only_smartstore")) and bool(raw) and not smart
-
+        raw += naver_search(q.replace("{품목}", name).replace("{지역}", region), cid, secret, scfg["display"])
     seen, out = set(), []
-    for rank, it in enumerate(pool):
-        mall = (it.get("mallName") or "").strip()
-        title = re.sub(r"<.*?>", "", it.get("title", ""))
-        if not mall or mall in scfg["exclude_malls"] or norm(mall) in seen:
+    for rank, it in enumerate(raw):
+        title, desc = clean(it.get("title")), clean(it.get("description"))
+        st = store_of(it.get("link", ""), title)
+        if not st or st[0] in seen:
             continue
-        if scfg.get("category2") and it.get("category2") != scfg["category2"]:
-            continue
-        if any(w in title for w in scfg["exclude_title"]):
-            continue
-        seen.add(norm(mall))
-        region = find_region(title, names, strict, aliases) or find_region(mall, names, strict, aliases)
+        seen.add(st[0])
+        text = title + " " + desc
+        has_region = any(w in text for w in [region] + words.get(region, []))
+        if region == "광주" and "경기" in text:
+            has_region = False
         out.append({
-            "품목": name, "스토어": mall, "상품명": title, "링크": it.get("link", ""),
-            "최저가": it.get("lprice", ""), "산지": region or "",
-            "시도": names.get(region, "") if region else "",
-            "생산자": any(k in mall for k in scfg["producer_keywords"]), "순위": rank,
+            "품목": name, "지역": region, "스토어": st[1], "아이디": st[0], "스토어 주소": st[2],
+            "페이지 제목": title, "링크": it.get("link", ""),
+            "품목 일치": name in text, "지역 일치": has_region,
+            "제외어": next((w for w in scfg["exclude_title"] if w in title), ""),
+            "생산자": any(k in st[1] + " " + desc for k in scfg["producer_keywords"]), "순위": rank,
         })
     out.sort(key=lambda c: (0 if c["생산자"] else 1, c["순위"]))
-    return out, len(raw), fallback
+    return out, len(raw)
 
 
 # ---------- 판정·출력 ----------
@@ -201,12 +204,8 @@ def signal_text(rows, th):
     return " / ".join(parts)
 
 
-def price(v):
-    return f"{int(v):,}원" if str(v).isdigit() else "–"
-
-
 def link(c):
-    return f"[{c['스토어']}]({c['링크']})"
+    return f"[{c['스토어']}]({c['스토어 주소']})"
 
 
 def main():
@@ -222,15 +221,15 @@ def main():
     if run_date is None:
         sys.exit("data/log.csv가 비어 있다. 모니터가 먼저 돌아야 한다.")
     routes = load_routes(scfg.get("require_parcel"), scfg.get("require_confirmed"))
-    names, strict, aliases = load_regions()
+    words = load_aliases()
     excluded, warn = load_contacts(os.environ.get("CONTACTS_CSV_URL"), scfg["recontact_days"], now.date())
 
     lines = [
         f"# 직공 컨택 후보 스토어 — {run_date} 도매가 알림 기준",
         "",
-        f"만든 시각: {now:%Y-%m-%d %H:%M} (KST). 품목당 최대 {scfg['max_per_item']}곳, "
-        "고양종합터미널 직행 노선이 있는 시·군만.",
-        "산지는 상품명·스토어명에서 추정한 값이라 연락 전에 상품 페이지의 출하지를 확인할 것.",
+        f"만든 시각: {now:%Y-%m-%d %H:%M} (KST). 품목당 최대 {scfg['max_per_item']}곳.",
+        f"검색 지역(고양종합터미널 직행 노선): {', '.join(routes) or '없음'}.",
+        "산지는 검색 결과 글에서 추정한 값이라 연락 전에 상품 페이지의 출하지를 확인할 것.",
     ]
     if warn:
         lines += ["", f"> 주의: {warn}"]
@@ -238,64 +237,71 @@ def main():
         lines.append(f"컨택목록 반영: {len(excluded)}곳 제외.")
     lines.append("")
 
-    audit, used = [], set()  # used: 앞 품목에서 이미 올린 스토어 (스토어는 리스트 전체에서 한 번만)
+    audit, used, n_raw_all, n_store_all = [], set(), 0, 0
     if not groups:
         lines.append("오늘 알림 품목 없음.")
     for name, rows in groups.items():
-        cands, n_raw, fallback = candidates_for(name, scfg, cid, secret, names, strict, aliases)
-        picked, unknown, n_noroute, n_contacted = [], [], 0, 0
-        for c in cands:
-            key = norm(c["스토어"])
-            if key in excluded:
-                verdict, n_contacted = "컨택 완료 제외", n_contacted + 1
-            elif key in used:
-                verdict = "다른 품목에 이미 올림"
-            elif not c["산지"]:
-                verdict = "산지 확인 필요"
-                unknown.append(c)
-            elif c["산지"] not in routes or (c["산지"] == "광주" and "경기" in c["상품명"]):
-                verdict, n_noroute = "노선 없는 지역", n_noroute + 1
-            elif len(picked) < scfg["max_per_item"]:
-                verdict = "선정"
-                picked.append(c)
-                used.add(key)
-            else:
-                verdict = "조건 충족, 3곳 초과"
-            audit.append(c | {"판정": verdict})
+        picked, unsure, n_contacted, n_store = [], [], 0, 0
+        for region in routes:
+            cands, n_raw = candidates_for(name, region, words, scfg, cid, secret)
+            n_raw_all += n_raw
+            n_store += len(cands)
+            for c in cands:
+                if norm(c["스토어"]) in excluded or c["아이디"] in excluded:
+                    verdict, n_contacted = "컨택 완료 제외", n_contacted + 1
+                elif c["아이디"] in used:
+                    verdict = "이미 올림"
+                elif c["제외어"]:
+                    verdict = f"제외어({c['제외어']})"
+                elif not (c["품목 일치"] and c["지역 일치"]):
+                    verdict = "품목·지역 확인 필요"
+                    unsure.append(c)
+                    used.add(c["아이디"])
+                elif len(picked) < scfg["max_per_item"]:
+                    verdict = "선정"
+                    picked.append(c)
+                    used.add(c["아이디"])
+                else:
+                    verdict = "조건 충족, 3곳 초과"
+                audit.append(c | {"판정": verdict})
+        n_store_all += n_store
 
         lines += [f"## {name}", "", f"알림: {signal_text(rows, th)}", ""]
-        if fallback:
-            lines += ["> 주의: 스마트스토어 링크를 구분하지 못해 전체 쇼핑몰에서 골랐음.", ""]
         if picked:
-            lines += ["| 순서 | 스토어 | 산지 | 출발 터미널 | 소화물 | 최저가 | 상품명 |", "|---|---|---|---|---|---:|---|"]
+            lines += ["| 순서 | 스토어 | 산지 | 출발 터미널 | 소화물 | 찾은 페이지 |", "|---|---|---|---|---|---|"]
             for i, c in enumerate(picked, 1):
-                rt = routes[c["산지"]]
+                rt = routes[c["지역"]]
                 lines.append(
-                    f"| {i} | {link(c)}{' (생산자)' if c['생산자'] else ''} | {c['시도']} {c['산지']} | "
-                    f"{', '.join(r['출발 터미널'] for r in rt)} | {rt[0]['소화물']} | {price(c['최저가'])} | {c['상품명']} |"
+                    f"| {i} | {link(c)}{' (생산자)' if c['생산자'] else ''} | {rt[0]['시도']} {c['지역']} | "
+                    f"{', '.join(r['출발 터미널'] for r in rt)} | {rt[0]['소화물']} | [{c['페이지 제목'][:40]}]({c['링크']}) |"
                 )
-        elif not cands:
-            lines.append("**없음** — 조건에 맞는 스토어 검색 결과가 없음." if n_raw else "**없음** — 검색 결과가 없음.")
-        elif n_contacted and not n_noroute and not unknown:
+        elif not n_store:
+            lines.append("**없음** — 노선 지역에서 이 품목을 파는 스마트스토어가 검색되지 않음.")
+        elif n_contacted and not unsure:
             lines.append(f"**없음** — 조건에 맞는 스토어 {n_contacted}곳이 모두 컨택 완료.")
         else:
-            lines.append(f"**없음** — 직행 노선이 있는 지역의 스토어가 없음 "
-                         f"(노선 없는 지역 {n_noroute}곳, 컨택 완료 {n_contacted}곳).")
-        if unknown:
-            lines += ["", f"산지 확인 필요 {len(unknown)}곳 중 상위: " + ", ".join(link(c) for c in unknown[:3])]
+            lines.append(f"**없음** — 스토어 {n_store}곳이 검색됐지만 품목·지역이 확인되는 곳이 없음 "
+                         f"(컨택 완료 {n_contacted}곳).")
+        if unsure:
+            lines += ["", f"품목·지역 확인 필요 {len(unsure)}곳 중 상위: "
+                      + ", ".join(f"{link(c)}({c['지역']})" for c in unsure[:3])]
         lines.append("")
+
+    if groups and n_raw_all and not n_store_all:
+        lines += ["> 주의: 웹문서 검색 결과에 스마트스토어 주소가 한 건도 없음. 검색어(config.json의 queries)를 바꿔 볼 것.", ""]
 
     out_dir = DATA / "stores"
     out_dir.mkdir(parents=True, exist_ok=True)
     text = "\n".join(lines).rstrip() + "\n"
     (ROOT / "STORES.md").write_text(text, encoding="utf-8")
     (out_dir / f"{run_date}.md").write_text(text, encoding="utf-8")
-    fields = ["품목", "판정", "스토어", "산지", "시도", "생산자", "최저가", "상품명", "링크"]
+    fields = ["품목", "지역", "판정", "스토어", "생산자", "품목 일치", "지역 일치", "페이지 제목", "스토어 주소", "링크"]
     with open(out_dir / f"{run_date}.csv", "w", newline="", encoding="utf-8-sig") as f:
         w = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
         w.writeheader()
         w.writerows(audit)
-    print(f"{run_date}: 품목 {len(groups)}개, 선정 {sum(1 for a in audit if a['판정'] == '선정')}곳, 후보 {len(audit)}곳")
+    print(f"{run_date}: 품목 {len(groups)}개 × 지역 {len(routes)}곳, 검색 결과 {n_raw_all}건, "
+          f"스마트스토어 {n_store_all}곳, 선정 {sum(1 for a in audit if a['판정'] == '선정')}곳")
 
 
 if __name__ == "__main__":
