@@ -33,11 +33,12 @@
     "items_source": "fixed",
     "_items_source": "fixed=아래 fixed_items만 검색. alerts=폭락 알림 품목을 검색",
     "fixed_items": [
-      {"name": "밤고구마", "match": ["고구마"]}
+      {"name": "사과", "regions": ["충주"]},
+      {"name": "고구마", "regions": ["충주"]}
     ],
-    "_fixed_items": "name이 검색어. 업체 글에 name이나 match 단어가 있어야 후보로 본다. name이 정확히 있는 업체를 우선",
+    "_fixed_items": "name이 검색어. regions를 적으면 그 노선 지역만 검색(없으면 노선 지역 전체 + 전국). match에 단어를 적으면 그 단어가 있어도 품목 일치로 본다",
     "max_per_item": 5,
-    "region_queries": ["{지역} {품목} 스마트스토어"],
+    "region_queries": ["{지역} {품목} 스마트스토어", "{지역} {품목} 농장 스마트스토어", "{지역} {품목} 과수원 농원 스마트스토어", "{지역} {품목} 산지직송 농가 스마트스토어"],
     "general_queries": ["{품목} 농장 스마트스토어", "{품목} 산지직송 스마트스토어", "{품목} 농가 직거래 스마트스토어"],
     "_queries": "네이버 웹문서 검색어. region_queries는 노선 시·군마다, general_queries는 지역 없이 한 번씩 돈다",
     "display": 100,

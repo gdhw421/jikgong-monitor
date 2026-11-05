@@ -48,7 +48,7 @@ KAMIS_CERT_KEY=... KAMIS_CERT_ID=... python monitor.py
 
 모니터가 성공으로 끝나면 `daily-stores` 워크플로가 이어서 돈다. 결과는 `STORES.md`(매일 교체)와 `data/stores/`(날짜별 보관).
 
-- 대상: `config.json`의 `stores.fixed_items`(현재 밤고구마). 품목당 최대 5곳, 업체는 리스트 전체에서 한 번만. `items_source`를 `alerts`로 바꾸면 폭락 알림 품목 기준.
+- 대상: `config.json`의 `stores.fixed_items`(현재 충주 사과, 충주 고구마). 품목당 최대 5곳, 업체는 리스트 전체에서 한 번만. `items_source`를 `alerts`로 바꾸면 폭락 알림 품목 기준.
 - 후보: NAVER API HUB 웹문서 검색 결과 중 스마트스토어 주소만 남긴다. (쇼핑 검색 API는 2026-07-31 종료)
 - 산지: 검색 결과 글에 든 시·군 이름으로 추정. 노선 지역이면 선정, 아니면 참고 목록.
 - 노선: `data/routes.csv`에 있는 시·군만 인정. 고양종합터미널 직행(환승 없음) 기준. 분기마다 확인해 고칠 것.
