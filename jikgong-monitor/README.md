@@ -46,7 +46,7 @@ KAMIS_CERT_KEY=... KAMIS_CERT_ID=... python monitor.py
 
 ## 컨택 후보 스토어 리스트 (stores.py)
 
-모니터가 성공으로 끝나면 `daily-stores` 워크플로가 이어서 돈다. 결과는 `STORES.md`(매일 교체)와 `data/stores/`(날짜별 보관).
+자동 실행은 하지 않는다. Actions 탭의 `daily-stores`에서 Run workflow를 누를 때만 돈다. 품목은 시기별로 `config.json`의 `stores.fixed_items`에서 바꾼다. 결과는 `STORES.md`(매일 교체)와 `data/stores/`(날짜별 보관).
 
 - 대상: `config.json`의 `stores.fixed_items`(현재 충주 사과, 충주 고구마). 품목당 최대 5곳, 업체는 리스트 전체에서 한 번만. `items_source`를 `alerts`로 바꾸면 폭락 알림 품목 기준.
 - 후보: NAVER API HUB 웹문서 검색 결과 중 스마트스토어 주소만 남긴다. (쇼핑 검색 API는 2026-07-31 종료)

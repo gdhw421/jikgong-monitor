@@ -1,10 +1,8 @@
 name: daily-stores
 
-# 폭락 감지 모니터(daily-monitor)가 성공으로 끝나면 이어서 돈다.
+# 자동 실행 없음. Actions 탭에서 Run workflow를 눌렀을 때만 돈다.
+# (대상 품목은 jikgong-monitor/config.json의 stores.fixed_items에서 시기별로 바꾼다)
 on:
-  workflow_run:
-    workflows: ["daily-monitor"]
-    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -12,7 +10,6 @@ permissions:
 
 jobs:
   run:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     defaults:
       run:
