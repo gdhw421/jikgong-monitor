@@ -246,7 +246,7 @@ def search_local(name, match, region, sido, scfg, cid, secret):
             "구분": "지도 등록", "스토어": title[:30], "아이디": "local:" + key,
             "스토어 주소": "https://map.naver.com/p/search/" + quote(f"{region} {title}"),
             "페이지 제목": title, "링크": home,
-            "소개": " · ".join(x for x in (addr, cat, home) if x),
+            "소개": " · ".join(x for x in (addr, cat) if x),
             "산지": region if region in addr else "", "시도": sido if region in addr else "",
             "품목 일치": any(w in text for w in match), "정확 일치": match[0] in title,
             "제외어": next((w for w in scfg["local_exclude_category"] if w in cat), "")
@@ -275,13 +275,18 @@ def link(c):
     return f"[{c['스토어']}]({c['스토어 주소']})"
 
 
+def online(c):
+    """온라인 판매·안내 채널 주소. 스마트스토어는 스토어 주소, 지도 등록 업체는 등록된 홈페이지."""
+    return c["스토어 주소"] if c["구분"] == "스마트스토어" else c["링크"]
+
+
 def table(picked, routes):
-    lines = ["| 순서 | 업체 | 구분 | 산지(추정) | 출발 터미널 | 소화물 | 소개 |", "|---|---|---|---|---|---|---|"]
+    lines = ["| 순서 | 업체 | 구분 | 산지(추정) | 출발 터미널 | 소화물 | 온라인 채널 | 소개 |", "|---|---|---|---|---|---|---|---|"]
     for i, c in enumerate(picked, 1):
         rt = routes.get(c["산지"])
         lines.append(
             f"| {i} | {link(c)}{' (생산자)' if c['생산자'] else ''} | {c['구분']} | {(c['시도'] + ' ' + c['산지']).strip() or '미상'} | "
-            f"{', '.join(r['출발 터미널'] for r in rt) if rt else '확인 필요'} | {rt[0]['소화물'] if rt else '–'} | "
+            f"{', '.join(r['출발 터미널'] for r in rt) if rt else '확인 필요'} | {rt[0]['소화물'] if rt else '–'} | {'[열기](' + online(c) + ')' if online(c) else '–'} | "
             f"{c['소개'].replace('|', ' ')} |"
         )
     return lines
@@ -353,17 +358,23 @@ def main():
                 c["판정"] = f"제외어({c['제외어']})"
             elif local and not c["생산자"]:
                 c["판정"] = "농가 아님(분류)"
-            elif not local and not c["품목 일치"]:
+            elif local and c["산지"] not in search_regions:
+                c["판정"] = "대상 밖 지역"
+            elif local and not c["품목 일치"]:
+                c["판정"] = "품목 확인 필요"  # 대상 지역 농가지만 이름·분류에 품목이 없음
+                others.append(c)
+            elif not c["품목 일치"]:
                 c["판정"] = "품목 불일치"
             elif c["산지"] in search_regions:
                 eligible.append(c)
             else:
                 c["판정"] = "대상 밖 지역" if c["산지"] else "산지 미상"
-                if not local:
-                    others.append(c)
-        # 생산자 → 품목이 글에 있는 곳 → 스마트스토어 → 검색 순위 순으로 n_max곳
-        eligible.sort(key=lambda c: (0 if c["생산자"] else 1, 0 if c["품목 일치"] else 1,
-                                     0 if c["구분"] == "스마트스토어" else 1, c["순위"]))
+                others.append(c)
+        # 생산자 → 온라인 채널 있는 곳 → 스마트스토어 → 검색 순위 순으로 n_max곳
+        order = lambda c: (0 if c["생산자"] else 1, 0 if online(c) else 1,
+                           0 if c["구분"] == "스마트스토어" else 1, c["순위"])
+        eligible.sort(key=order)
+        others.sort(key=lambda c: (0 if c["판정"] == "품목 확인 필요" else 1,) + order(c))
         picked = eligible[:n_max]
         for c in eligible:
             c["판정"] = "선정" if c in picked else f"조건 충족, {n_max}곳 초과"
@@ -382,9 +393,10 @@ def main():
             lines.append(f"**없음** — 조건에 맞는 업체 {n_contacted}곳이 모두 컨택 완료.")
         else:
             lines.append("**없음** — 대상 지역의 업체가 없음.")
-        rest = others[: max(0, n_max - len(picked))]
+        rest = others[:n_max]
         if rest:
-            lines += ["", f"### 참고: 대상 밖 지역 또는 산지 미상 ({len(rest)}곳, 전체 {len(others)}곳 중)", ""]
+            lines += ["", f"### 참고: 품목 확인 필요 또는 대상 밖 ({len(rest)}곳, 전체 {len(others)}곳 중)", "",
+                      "대상 지역 농가지만 이름·분류에 품목이 없거나, 산지가 대상 밖이거나 알 수 없는 곳.", ""]
             lines += table(rest, routes)
         lines.append("")
 
