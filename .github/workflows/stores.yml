@@ -1,0 +1,43 @@
+name: daily-stores
+
+# 폭락 감지 모니터(daily-monitor)가 성공으로 끝나면 이어서 돈다.
+on:
+  workflow_run:
+    workflows: ["daily-monitor"]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  run:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: jikgong-monitor
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r requirements.txt
+
+      - name: 스토어 리스트 만들기
+        env:
+          NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
+          NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
+          CONTACTS_CSV_URL: ${{ secrets.CONTACTS_CSV_URL }}
+        run: python stores.py
+
+      - name: 결과 커밋
+        run: |
+          git config user.name "jikgong-monitor"
+          git config user.email "actions@users.noreply.github.com"
+          git add data/stores STORES.md
+          git diff --cached --quiet || git commit -m "stores: $(date -u -d '+9 hours' +%Y-%m-%d)"
+          git pull --rebase
+          git push

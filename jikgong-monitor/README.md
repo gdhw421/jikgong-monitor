@@ -43,3 +43,15 @@ KAMIS_CERT_KEY=... KAMIS_CERT_ID=... python monitor.py
 ## 첫 실행 후 확인할 것
 
 `data/raw/`의 원본 JSON에서 가격 필드가 `dpr1`~`dpr7` 이름인지 확인한다. 다르면 `monitor.py` 상단의 `FIELD_*` 상수만 바꾸면 된다.
+
+## 컨택 후보 스토어 리스트 (stores.py)
+
+모니터가 성공으로 끝나면 `daily-stores` 워크플로가 이어서 돈다. 결과는 `STORES.md`(매일 교체)와 `data/stores/`(날짜별 보관).
+
+- 대상: 가장 최근 알림 품목. 품목당 최대 3곳, 스토어는 리스트 전체에서 한 번만.
+- 후보: NAVER API HUB 웹문서 검색으로 "{지역} {품목} 스마트스토어"를 찾아 스마트스토어 주소만 남긴다. (쇼핑 검색 API는 2026-07-31 종료)
+- 산지: 노선 지역 이름으로 검색하고, 결과 글에 그 지역과 품목이 모두 있을 때만 선정. 아니면 '품목·지역 확인 필요'.
+- 노선: `data/routes.csv`에 있는 시·군만 인정. 고양종합터미널 직행(환승 없음) 기준. 분기마다 확인해 고칠 것.
+- 컨택 제외: 구글 시트 컨택목록에 적힌 스토어는 뺀다. '회신 대기'로 14일이 지나면 다시 노출.
+
+필요한 저장소 Secrets: `NAVER_CLIENT_ID`, `NAVER_CLIENT_SECRET`(NAVER API HUB Application의 Client ID·Secret), `CONTACTS_CSV_URL`(선택).
