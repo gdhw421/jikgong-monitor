@@ -42,6 +42,8 @@
     "_producer_keywords": "스토어명에 있으면 생산자 직접 운영으로 보고 우선",
     "recontact_days": 14,
     "_recontact_days": "'회신 대기' 상태로 이 일수가 지나면 다시 노출",
+    "require_confirmed": true,
+    "_require_confirmed": "true면 routes.csv에서 '도착방향 확인'이 O인 터미널만 인정. 시외버스 노선을 확인해 O로 바꾸면 자동 반영",
     "require_parcel": false,
     "_require_parcel": "true면 routes.csv에서 소화물이 O인 터미널만 인정. 소화물 확인 전에는 false"
   }

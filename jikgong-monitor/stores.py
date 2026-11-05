@@ -61,10 +61,12 @@ def search_name(item, kind):
     return item
 
 
-def load_routes(require_parcel):
+def load_routes(require_parcel, require_confirmed=False):
     routes = {}
     with open(DATA / "routes.csv", encoding="utf-8-sig") as f:
         for r in csv.DictReader(f):
+            if require_confirmed and r.get("도착방향 확인", "").strip().upper() != "O":
+                continue
             if require_parcel and r["소화물"].strip().upper() != "O":
                 continue
             routes.setdefault(r["시군"].strip(), []).append(r)
@@ -219,7 +221,7 @@ def main():
     run_date, groups = load_alerts()
     if run_date is None:
         sys.exit("data/log.csv가 비어 있다. 모니터가 먼저 돌아야 한다.")
-    routes = load_routes(scfg.get("require_parcel"))
+    routes = load_routes(scfg.get("require_parcel"), scfg.get("require_confirmed"))
     names, strict, aliases = load_regions()
     excluded, warn = load_contacts(os.environ.get("CONTACTS_CSV_URL"), scfg["recontact_days"], now.date())
 
