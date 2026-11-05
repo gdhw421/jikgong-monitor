@@ -235,7 +235,7 @@ def table(picked, routes):
         rt = routes.get(c["산지"])
         lines.append(
             f"| {i} | {link(c)}{' (생산자)' if c['생산자'] else ''} | {(c['시도'] + ' ' + c['산지']).strip() or '미상'} | "
-            f"{', '.join(r['출발 터미널'] for r in rt) if rt else ('노선 없음' if c['산지'] else '확인 필요')} | {rt[0]['소화물'] if rt else '–'} | "
+            f"{', '.join(r['출발 터미널'] for r in rt) if rt else '확인 필요'} | {rt[0]['소화물'] if rt else '–'} | "
             f"{c['소개'].replace('|', ' ')} |"
         )
     return lines
@@ -256,11 +256,12 @@ def main():
         run_date, groups = load_alerts()
         if run_date is None:
             sys.exit("data/log.csv가 비어 있다. 모니터가 먼저 돌아야 한다.")
-        items = {name: ([name], rows) for name, rows in groups.items()}
+        items = {name: ([name], rows, None) for name, rows in groups.items()}
         basis = f"{run_date} 도매가 알림 품목"
     else:
-        items = {it["name"]: ([it["name"]] + it.get("match", []), None) for it in scfg["fixed_items"]}
-        basis = "고정 품목 " + ", ".join(items)
+        items = {it["name"]: ([it["name"]] + it.get("match", []), None, it.get("regions")) for it in scfg["fixed_items"]}
+        basis = "고정 품목 " + ", ".join(
+            (" ".join(it.get("regions", [])) + " " + it["name"]).strip() for it in scfg["fixed_items"])
 
     routes = load_routes(scfg.get("require_parcel"), scfg.get("require_confirmed"))
     regions = load_regions()
@@ -280,9 +281,12 @@ def main():
     audit, used, n_raw_all, n_store_all = [], set(), 0, 0
     if not items:
         lines.append("대상 품목 없음.")
-    for name, (match, rows) in items.items():
-        queries = [q.replace("{품목}", name).replace("{지역}", r) for r in routes for q in scfg["region_queries"]]
-        queries += [q.replace("{품목}", name) for q in scfg["general_queries"]]
+    for name, (match, rows, only) in items.items():
+        # 품목에 regions가 정해져 있으면 그 지역만 검색하고, 지역 없는 검색은 하지 않는다
+        search_regions = [r for r in routes if r in only] if only else list(routes)
+        queries = [q.replace("{품목}", name).replace("{지역}", r) for r in search_regions for q in scfg["region_queries"]]
+        if not only:
+            queries += [q.replace("{품목}", name) for q in scfg["general_queries"]]
         cands, n_raw = search_stores(queries, match, scfg, cid, secret, regions)
         n_raw_all += n_raw
         n_store_all += len(cands)
@@ -296,7 +300,7 @@ def main():
                 verdict = f"제외어({c['제외어']})"
             elif not c["품목 일치"]:
                 verdict = "품목 불일치"
-            elif c["산지"] in routes:
+            elif c["산지"] in search_regions:
                 if len(picked) < n_max:
                     verdict = "선정"
                     picked.append(c)
@@ -304,11 +308,11 @@ def main():
                 else:
                     verdict = f"조건 충족, {n_max}곳 초과"
             else:
-                verdict = "노선 없는 지역" if c["산지"] else "산지 미상"
+                verdict = "대상 밖 지역" if c["산지"] else "산지 미상"
                 others.append(c)
             audit.append({"품목": name} | c | {"판정": verdict})
 
-        lines += [f"## {name}", ""]
+        lines += [f"## {(' '.join(only) + ' ') if only else ''}{name}", ""]
         if rows:
             lines += [f"알림: {signal_text(rows, th)}", ""]
         lines += [f"### 노선 조건 충족 ({len(picked)}곳)", ""]
@@ -319,10 +323,10 @@ def main():
         elif n_contacted and not others:
             lines.append(f"**없음** — 조건에 맞는 업체 {n_contacted}곳이 모두 컨택 완료.")
         else:
-            lines.append("**없음** — 직행 노선이 있는 지역의 업체가 없음.")
+            lines.append("**없음** — 대상 지역의 업체가 없음.")
         rest = others[: max(0, n_max - len(picked))]
         if rest:
-            lines += ["", f"### 참고: 노선 밖 또는 산지 미상 ({len(rest)}곳, 전체 {len(others)}곳 중)", ""]
+            lines += ["", f"### 참고: 대상 밖 지역 또는 산지 미상 ({len(rest)}곳, 전체 {len(others)}곳 중)", ""]
             lines += table(rest, routes)
         lines.append("")
 
