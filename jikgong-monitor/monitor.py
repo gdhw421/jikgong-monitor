@@ -18,6 +18,7 @@ import csv
 import json
 import os
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -69,9 +70,19 @@ def fetch_category(cfg, category, run_date, key, cert_id):
         "p_cert_id": cert_id,
         "p_returntype": "json",
     }
-    r = requests.get(API, params=params, timeout=30)
-    r.raise_for_status()
-    body = r.json()
+    # KAMIS가 응답하지 않는 날이 있어, 바로 포기하지 않고 간격을 늘려 가며 다시 요청한다.
+    body = None
+    for attempt in range(1, 5):
+        try:
+            r = requests.get(API, params=params, timeout=60)
+            r.raise_for_status()
+            body = r.json()
+            break
+        except (requests.RequestException, ValueError) as e:
+            print(f"[{category}] 요청 실패 {attempt}/4: {type(e).__name__}", file=sys.stderr)
+            if attempt == 4:
+                raise
+            time.sleep(30 * attempt)
 
     raw_path = DATA / "raw" / f"{run_date}_{category}.json"
     raw_path.write_text(json.dumps(body, ensure_ascii=False, indent=2), encoding="utf-8")
